@@ -198,6 +198,24 @@ def create_tables():
                 formula_expr TEXT, a1 REAL, a2 REAL, a3 REAL,
                 source TEXT DEFAULT 'manual', created_at TEXT
             )""",
+            """CREATE TABLE IF NOT EXISTS indicator_params (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE NOT NULL,
+                category TEXT DEFAULT 'custom',
+                param_config TEXT NOT NULL,
+                description TEXT,
+                created_at TEXT,
+                updated_at TEXT
+            )""",
+            """CREATE TABLE IF NOT EXISTS formula_combinations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                formula_expr TEXT NOT NULL,
+                logic_desc TEXT,
+                indicator_refs TEXT,
+                created_at TEXT,
+                updated_at TEXT
+            )""",
         ]
         for sql in tables:
             conn.execute(text(sql))
@@ -230,6 +248,33 @@ def create_tables():
         conn.execute(text("""INSERT OR IGNORE INTO u1_config
             (id, name, hold_days, profit_pct, buy_price, enabled, created_at, updated_at)
             VALUES (1, '默认配置', 5, 2.0, 'MA5', 1, datetime('now'), datetime('now'))"""))
+        conn.commit()
+
+        # Migration: ensure new tables exist in existing databases
+        for new_table_sql in [
+            """CREATE TABLE IF NOT EXISTS indicator_params (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE NOT NULL,
+                category TEXT DEFAULT 'custom',
+                param_config TEXT NOT NULL,
+                description TEXT,
+                created_at TEXT,
+                updated_at TEXT
+            )""",
+            """CREATE TABLE IF NOT EXISTS formula_combinations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                formula_expr TEXT NOT NULL,
+                logic_desc TEXT,
+                indicator_refs TEXT,
+                created_at TEXT,
+                updated_at TEXT
+            )"""
+        ]:
+            try:
+                conn.execute(text(new_table_sql))
+            except Exception:
+                pass
         conn.commit()
 
 

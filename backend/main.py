@@ -751,6 +751,159 @@ def get_formula_override(code: str, db: Session = Depends(get_db)):
 
 
 # ============================================================================
+# 指标参数配置（第一部分）
+# ============================================================================
+
+@app.get("/api/logic/indicators")
+def list_indicators(db: Session = Depends(get_db)):
+    """列出所有已配置的指标参数"""
+    rows = db.execute(text(
+        """SELECT id, name, category, param_config, description, created_at, updated_at
+           FROM indicator_params ORDER BY id DESC"""
+    )).fetchall()
+    result = []
+    for r in rows:
+        result.append({
+            "id": r[0], "name": r[1], "category": r[2],
+            "param_config": json.loads(r[3]) if r[3] else {},
+            "description": r[4], "created_at": r[5], "updated_at": r[6]
+        })
+    return result
+
+
+class IndicatorParamRequest(BaseModel):
+    name: str
+    category: str = "custom"
+    param_config: dict
+    description: Optional[str] = ""
+
+
+@app.post("/api/logic/indicators")
+def create_indicator(req: IndicatorParamRequest, db: Session = Depends(get_db)):
+    """新增一条指标参数配置"""
+    try:
+        db.execute(text(
+            """INSERT INTO indicator_params (name, category, param_config, description, created_at, updated_at)
+               VALUES (:name, :category, :param_config, :description, :created_at, :updated_at)"""
+        ), {
+            "name": req.name, "category": req.category,
+            "param_config": json.dumps(req.param_config),
+            "description": req.description,
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat()
+        })
+        db.commit()
+        row = db.execute(text("SELECT last_insert_rowid()")).fetchone()
+        return {"id": row[0], "name": req.name, "ok": True}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(400, str(e))
+
+
+@app.put("/api/logic/indicators/{id}")
+def update_indicator(id: int, req: IndicatorParamRequest, db: Session = Depends(get_db)):
+    """更新一条指标参数配置"""
+    db.execute(text(
+        """UPDATE indicator_params
+           SET name=:name, category=:category, param_config=:param_config,
+               description=:description, updated_at=:updated_at
+           WHERE id=:id"""
+    ), {
+        "id": id, "name": req.name, "category": req.category,
+        "param_config": json.dumps(req.param_config),
+        "description": req.description,
+        "updated_at": datetime.now().isoformat()
+    })
+    db.commit()
+    return {"id": id, "ok": True}
+
+
+@app.delete("/api/logic/indicators/{id}")
+def delete_indicator(id: int, db: Session = Depends(get_db)):
+    """删除一条指标参数配置"""
+    db.execute(text("DELETE FROM indicator_params WHERE id=:id"), {"id": id})
+    db.commit()
+    return {"id": id, "ok": True}
+
+
+# ============================================================================
+# 公式组合配置（第二部分）
+# ============================================================================
+
+@app.get("/api/logic/formulas")
+def list_formula_combinations(db: Session = Depends(get_db)):
+    """列出所有已配置的公式组合"""
+    rows = db.execute(text(
+        """SELECT id, name, formula_expr, logic_desc, indicator_refs, created_at, updated_at
+           FROM formula_combinations ORDER BY id DESC"""
+    )).fetchall()
+    result = []
+    for r in rows:
+        result.append({
+            "id": r[0], "name": r[1], "formula_expr": r[2],
+            "logic_desc": r[3],
+            "indicator_refs": json.loads(r[4]) if r[4] else [],
+            "created_at": r[5], "updated_at": r[6]
+        })
+    return result
+
+
+class FormulaCombinationRequest(BaseModel):
+    name: str
+    formula_expr: str
+    logic_desc: Optional[str] = ""
+    indicator_refs: List[int] = []
+
+
+@app.post("/api/logic/formulas")
+def create_formula_combination(req: FormulaCombinationRequest, db: Session = Depends(get_db)):
+    """新增一条公式组合"""
+    try:
+        db.execute(text(
+            """INSERT INTO formula_combinations (name, formula_expr, logic_desc, indicator_refs, created_at, updated_at)
+               VALUES (:name, :formula_expr, :logic_desc, :indicator_refs, :created_at, :updated_at)"""
+        ), {
+            "name": req.name, "formula_expr": req.formula_expr,
+            "logic_desc": req.logic_desc,
+            "indicator_refs": json.dumps(req.indicator_refs),
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat()
+        })
+        db.commit()
+        row = db.execute(text("SELECT last_insert_rowid()")).fetchone()
+        return {"id": row[0], "name": req.name, "ok": True}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(400, str(e))
+
+
+@app.put("/api/logic/formulas/{id}")
+def update_formula_combination(id: int, req: FormulaCombinationRequest, db: Session = Depends(get_db)):
+    """更新一条公式组合"""
+    db.execute(text(
+        """UPDATE formula_combinations
+           SET name=:name, formula_expr=:formula_expr, logic_desc=:logic_desc,
+               indicator_refs=:indicator_refs, updated_at=:updated_at
+           WHERE id=:id"""
+    ), {
+        "id": id, "name": req.name, "formula_expr": req.formula_expr,
+        "logic_desc": req.logic_desc,
+        "indicator_refs": json.dumps(req.indicator_refs),
+        "updated_at": datetime.now().isoformat()
+    })
+    db.commit()
+    return {"id": id, "ok": True}
+
+
+@app.delete("/api/logic/formulas/{id}")
+def delete_formula_combination(id: int, db: Session = Depends(get_db)):
+    """删除一条公式组合"""
+    db.execute(text("DELETE FROM formula_combinations WHERE id=:id"), {"id": id})
+    db.commit()
+    return {"id": id, "ok": True}
+
+
+# ============================================================================
 # 设置（test-connection 必须放在 {key} 之前）
 # ============================================================================
 

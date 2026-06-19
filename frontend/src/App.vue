@@ -10,6 +10,9 @@
         <router-link to="/explore" class="nav-link" :class="{ active: $route.path === '/explore' }">
           {{ exploreNavText }}
         </router-link>
+        <router-link to="/logic-config" class="nav-link" :class="{ active: $route.path === '/logic-config' }">
+          组合逻辑
+        </router-link>
         <router-link to="/settings" class="nav-link" :class="{ active: $route.path === '/settings' }">
           设置
         </router-link>

@@ -73,6 +73,11 @@
           <h3>手动公式覆盖 - {{ selectedCode }}</h3>
           <p class="hint">设置后优先于AI探索的公式，覆盖将立即生效并参与后续探索迭代</p>
           <div class="override-fields">
+            <label class="label">从公式库引用（可选）</label>
+            <select v-model="overrideSelectedFormula" @change="onFormulaCombinationChange(overrideSelectedFormula)" class="select">
+              <option value="">-- 不引用，自定义输入 --</option>
+              <option v-for="fm in formulaCombinations" :key="fm.id" :value="fm.id">{{ fm.name }}</option>
+            </select>
             <label class="label">公式表达式</label>
             <input v-model="overrideExpr" placeholder="如: 0.5*RSI_6 + 0.5*VOL_RATIO > 0.7" class="input" />
             <label class="label">逻辑说明（选填）</label>
@@ -191,6 +196,8 @@ const addError = ref('')
 const overrideExpr = ref('')
 const overrideLogic = ref('')
 const overrideError = ref('')
+const formulaCombinations = ref([])
+const overrideSelectedFormula = ref('')
 const importText = ref('')
 const importResult = ref(null)
 const updatingOpps = ref(false)
@@ -366,11 +373,27 @@ async function updateOpportunities() {
   } catch (e) { console.error(e) } finally { updatingOpps.value = false }
 }
 
-function openOverride() {
+async function openOverride() {
   overrideExpr.value = formulas.value.length > 0 ? formulas.value[0].formula_expr : ''
   overrideLogic.value = formulas.value.length > 0 ? (formulas.value[0].logic_desc || '') : ''
   overrideError.value = ''
+  overrideSelectedFormula.value = ''
+  // Load formula combinations for dropdown
+  try {
+    formulaCombinations.value = await api.listFormulaCombinations()
+  } catch (e) {
+    formulaCombinations.value = []
+  }
   showOverride.value = true
+}
+
+function onFormulaCombinationChange(id) {
+  const fm = formulaCombinations.value.find(f => f.id === Number(id))
+  if (fm) {
+    overrideExpr.value = fm.formula_expr || ''
+    overrideLogic.value = fm.logic_desc || ''
+    overrideSelectedFormula.value = id
+  }
 }
 
 async function saveOverride() {

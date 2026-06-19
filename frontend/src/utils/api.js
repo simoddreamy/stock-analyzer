@@ -38,3 +38,13 @@ export const getFormulaOverride = (code) => req(`/formulas/${code}/override`)
 export const getSettings  = ()       => req('/settings')
 export const setSetting = (key, value) => req(`/settings/${key}`, { method: 'POST', body: JSON.stringify({ value }) })
 export const testConnection = (payload) => req('/settings/test-connection', { method: 'POST', body: JSON.stringify(payload) })
+
+// 组合逻辑配置 API
+export const listIndicators = () => req('/logic/indicators')
+export const createIndicator = (payload) => req('/logic/indicators', { method: 'POST', body: JSON.stringify(payload) })
+export const updateIndicator = (id, payload) => req(`/logic/indicators/${id}`, { method: 'PUT', body: JSON.stringify(payload) })
+export const deleteIndicator = (id) => req(`/logic/indicators/${id}`, { method: 'DELETE' })
+export const listFormulaCombinations = () => req('/logic/formulas')
+export const createFormulaCombination = (payload) => req('/logic/formulas', { method: 'POST', body: JSON.stringify(payload) })
+export const updateFormulaCombination = (id, payload) => req(`/logic/formulas/${id}`, { method: 'PUT', body: JSON.stringify(payload) })
+export const deleteFormulaCombination = (id) => req(`/logic/formulas/${id}`, { method: 'DELETE' })
