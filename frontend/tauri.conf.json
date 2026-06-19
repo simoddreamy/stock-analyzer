@@ -1,0 +1,5 @@
+{
+  "build": {
+    "devtools": true
+  }
+}
