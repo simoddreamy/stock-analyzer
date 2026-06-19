@@ -13,6 +13,9 @@
         <router-link to="/logic-config" class="nav-link" :class="{ active: $route.path === '/logic-config' }">
           组合逻辑
         </router-link>
+        <router-link to="/backtest" class="nav-link" :class="{ active: $route.path === '/backtest' }">
+          回测分析
+        </router-link>
         <router-link to="/settings" class="nav-link" :class="{ active: $route.path === '/settings' }">
           设置
         </router-link>

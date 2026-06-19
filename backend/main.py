@@ -24,7 +24,7 @@ from data_fetcher.fetcher import (
     fetch_stock_info,
     is_sz_main_board,
 )
-from indicators.calculator import register_builtin_indicators, precompute_indicators_for_stock
+from indicators.calculator import register_builtin_indicators, precompute_indicators_for_stock, BUILTIN_INDICATORS
 from explorer.engine import ExplorationSession, BatchExploration, compute_u1
 
 logging.basicConfig(level=logging.INFO)
@@ -751,42 +751,78 @@ def get_formula_override(code: str, db: Session = Depends(get_db)):
 
 
 # ============================================================================
-# 指标参数配置（第一部分）
+# 预置条件配置（指标参数库）
 # ============================================================================
+
+def _get_next_sequence(db, table: str) -> str:
+    """自动生成下一个序号（I001, I002, ...）"""
+    prefix = "I" if table == "indicator_params" else "F"
+    rows = db.execute(text(
+        f"SELECT sequence_number FROM {table} WHERE sequence_number LIKE :prefix ORDER BY sequence_number"
+    ), {"prefix": f"{prefix}%"}).fetchall()
+    if not rows:
+        return f"{prefix}001"
+    max_num = 0
+    for r in rows:
+        try:
+            num = int(r[0][1:])  # strip prefix
+            if num > max_num:
+                max_num = num
+        except (ValueError, IndexError):
+            pass
+    return f"{prefix}{max_num + 1:03d}"
+
 
 @app.get("/api/logic/indicators")
 def list_indicators(db: Session = Depends(get_db)):
-    """列出所有已配置的指标参数"""
+    """列出所有预置条件（指标参数）"""
     rows = db.execute(text(
-        """SELECT id, name, category, param_config, description, created_at, updated_at
-           FROM indicator_params ORDER BY id DESC"""
+        """SELECT id, sequence_number, name, param_config, description, created_at, updated_at
+           FROM indicator_params ORDER BY sequence_number ASC"""
     )).fetchall()
     result = []
     for r in rows:
         result.append({
-            "id": r[0], "name": r[1], "category": r[2],
+            "id": r[0],
+            "sequence_number": r[1] or "",
+            "name": r[2],
             "param_config": json.loads(r[3]) if r[3] else {},
-            "description": r[4], "created_at": r[5], "updated_at": r[6]
+            "description": r[4] or "",
+            "created_at": r[5],
+            "updated_at": r[6]
         })
     return result
 
 
 class IndicatorParamRequest(BaseModel):
+    sequence_number: Optional[str] = ""  # 可选，用户可指定
     name: str
-    category: str = "custom"
     param_config: dict
-    description: Optional[str] = ""
+    description: str = ""
 
 
 @app.post("/api/logic/indicators")
 def create_indicator(req: IndicatorParamRequest, db: Session = Depends(get_db)):
-    """新增一条指标参数配置"""
+    """新增一条预置条件"""
     try:
+        # 自动生成序号（如果未指定）
+        seq = req.sequence_number.strip() if req.sequence_number else ""
+        if not seq:
+            seq = _get_next_sequence(db, "indicator_params")
+
+        # 校验序号唯一性
+        existing = db.execute(text(
+            "SELECT id FROM indicator_params WHERE sequence_number=:seq"
+        ), {"seq": seq}).fetchone()
+        if existing:
+            raise HTTPException(400, f"序号 {seq} 已存在，请使用其他序号")
+
         db.execute(text(
-            """INSERT INTO indicator_params (name, category, param_config, description, created_at, updated_at)
-               VALUES (:name, :category, :param_config, :description, :created_at, :updated_at)"""
+            """INSERT INTO indicator_params (sequence_number, name, param_config, description, created_at, updated_at)
+               VALUES (:sequence_number, :name, :param_config, :description, :created_at, :updated_at)"""
         ), {
-            "name": req.name, "category": req.category,
+            "sequence_number": seq,
+            "name": req.name,
             "param_config": json.dumps(req.param_config),
             "description": req.description,
             "created_at": datetime.now().isoformat(),
@@ -794,7 +830,9 @@ def create_indicator(req: IndicatorParamRequest, db: Session = Depends(get_db)):
         })
         db.commit()
         row = db.execute(text("SELECT last_insert_rowid()")).fetchone()
-        return {"id": row[0], "name": req.name, "ok": True}
+        return {"id": row[0], "sequence_number": seq, "name": req.name, "ok": True}
+    except HTTPException:
+        raise
     except Exception as e:
         db.rollback()
         raise HTTPException(400, str(e))
@@ -802,76 +840,199 @@ def create_indicator(req: IndicatorParamRequest, db: Session = Depends(get_db)):
 
 @app.put("/api/logic/indicators/{id}")
 def update_indicator(id: int, req: IndicatorParamRequest, db: Session = Depends(get_db)):
-    """更新一条指标参数配置"""
-    db.execute(text(
-        """UPDATE indicator_params
-           SET name=:name, category=:category, param_config=:param_config,
-               description=:description, updated_at=:updated_at
-           WHERE id=:id"""
-    ), {
-        "id": id, "name": req.name, "category": req.category,
-        "param_config": json.dumps(req.param_config),
-        "description": req.description,
-        "updated_at": datetime.now().isoformat()
-    })
-    db.commit()
-    return {"id": id, "ok": True}
+    """更新一条预置条件"""
+    try:
+        seq = req.sequence_number.strip() if req.sequence_number else ""
+
+        # 校验序号唯一性（排除自己）
+        if seq:
+            existing = db.execute(text(
+                "SELECT id FROM indicator_params WHERE sequence_number=:seq AND id!=:id"
+            ), {"seq": seq, "id": id}).fetchone()
+            if existing:
+                raise HTTPException(400, f"序号 {seq} 已存在，请使用其他序号")
+        else:
+            seq = None
+
+        db.execute(text(
+            """UPDATE indicator_params
+               SET sequence_number=:sequence_number, name=:name, param_config=:param_config,
+                   description=:description, updated_at=:updated_at
+               WHERE id=:id"""
+        ), {
+            "id": id,
+            "sequence_number": seq,
+            "name": req.name,
+            "param_config": json.dumps(req.param_config),
+            "description": req.description,
+            "updated_at": datetime.now().isoformat()
+        })
+        db.commit()
+        return {"id": id, "ok": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(400, str(e))
 
 
 @app.delete("/api/logic/indicators/{id}")
 def delete_indicator(id: int, db: Session = Depends(get_db)):
-    """删除一条指标参数配置"""
+    """删除一条预置条件"""
     db.execute(text("DELETE FROM indicator_params WHERE id=:id"), {"id": id})
     db.commit()
     return {"id": id, "ok": True}
 
 
 # ============================================================================
-# 公式组合配置（第二部分）
+# 公式组合配置
 # ============================================================================
+
+async def _call_llm_for_description(formula_expr: str, indicator_map: dict) -> str:
+    """调用大模型解释公式表达式，生成中文描述"""
+    import httpx
+
+    # 获取LLM配置
+    from db.database import SessionLocal as DBLib
+    db = DBLib()
+    try:
+        api_key = db.execute(text("SELECT value FROM settings WHERE key='api_key'")).scalar()
+        api_base = db.execute(text("SELECT value FROM settings WHERE key='api_base'")).scalar()
+        model = db.execute(text("SELECT value FROM settings WHERE key='model'")).scalar()
+    finally:
+        db.close()
+
+    if not api_key or not api_base:
+        return "（未配置大模型，无法生成描述）"
+
+    # 构建指标说明
+    ind_info = []
+    for seq, ind_name in indicator_map.items():
+        ind_info.append(f"{seq}: {ind_name}")
+    ind_text = "\n".join(ind_info) if ind_info else "无"
+
+    prompt = f"""你是一个股票交易策略专家。请解释以下公式表达式的含义，用简洁的中文描述。
+
+公式表达式：{formula_expr}
+
+指标对照表：
+{ind_text}
+
+请用一句话描述这个公式的选股逻辑，例如："RSI指标超买且成交量放大"。
+只返回描述文字，不要其他内容。"""
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{api_base}/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json={
+                    "model": model or "gpt-4o-mini",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": 200
+                }
+            )
+        if response.status_code == 200:
+            data = response.json()
+            return data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+    except Exception:
+        pass
+    return ""
+
 
 @app.get("/api/logic/formulas")
 def list_formula_combinations(db: Session = Depends(get_db)):
     """列出所有已配置的公式组合"""
     rows = db.execute(text(
-        """SELECT id, name, formula_expr, logic_desc, indicator_refs, created_at, updated_at
-           FROM formula_combinations ORDER BY id DESC"""
+        """SELECT id, sequence_number, name, formula_expr, logic_desc, indicator_refs, created_at, updated_at
+           FROM formula_combinations ORDER BY sequence_number ASC"""
     )).fetchall()
     result = []
     for r in rows:
         result.append({
-            "id": r[0], "name": r[1], "formula_expr": r[2],
-            "logic_desc": r[3],
-            "indicator_refs": json.loads(r[4]) if r[4] else [],
-            "created_at": r[5], "updated_at": r[6]
+            "id": r[0],
+            "sequence_number": r[1] or "",
+            "name": r[2],
+            "formula_expr": r[3],
+            "logic_desc": r[4] or "",
+            "indicator_refs": json.loads(r[5]) if r[5] else [],
+            "created_at": r[6],
+            "updated_at": r[7]
         })
     return result
 
 
 class FormulaCombinationRequest(BaseModel):
+    sequence_number: Optional[str] = ""
     name: str
     formula_expr: str
-    logic_desc: Optional[str] = ""
+    logic_desc: Optional[str] = ""  # 可选，如果为空则自动调用LLM生成
     indicator_refs: List[int] = []
+    auto_desc: bool = True  # 是否自动调用LLM生成描述
 
 
 @app.post("/api/logic/formulas")
 def create_formula_combination(req: FormulaCombinationRequest, db: Session = Depends(get_db)):
-    """新增一条公式组合"""
+    """新增一条公式组合，自动生成序号，可调用LLM生成描述"""
+    import asyncio
     try:
+        # 自动生成序号
+        seq = req.sequence_number.strip() if req.sequence_number else ""
+        if not seq:
+            seq = _get_next_sequence(db, "formula_combinations")
+
+        # 校验序号唯一性
+        existing = db.execute(text(
+            "SELECT id FROM formula_combinations WHERE sequence_number=:seq"
+        ), {"seq": seq}).fetchone()
+        if existing:
+            raise HTTPException(400, f"序号 {seq} 已存在，请使用其他序号")
+
+        # 获取指标名称映射（用于LLM描述）
+        indicator_map = {}
+        if req.indicator_refs:
+            ids = req.indicator_refs
+            placeholders = ','.join([f':id{i}' for i in range(len(ids))])
+            rows = db.execute(text(
+                f"SELECT id, sequence_number, name FROM indicator_params WHERE id IN ({placeholders})"
+            ), {f'id{i}': v for i, v in enumerate(ids)}).fetchall()
+            for r in rows:
+                indicator_map[r[1] or f"I{r[0]:03d}"] = r[2]
+
+        # 自动调用LLM生成描述
+        logic_desc = req.logic_desc
+        if req.auto_desc and not logic_desc:
+            # 在同步上下文中调用异步LLM
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # 如果已经在运行，创建一个新线程来执行
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor() as pool:
+                        future = pool.submit(asyncio.run, _call_llm_for_description(req.formula_expr, indicator_map))
+                        logic_desc = future.result(timeout=35)
+                else:
+                    logic_desc = loop.run_until_complete(_call_llm_for_description(req.formula_expr, indicator_map))
+            except Exception:
+                logic_desc = ""
+
         db.execute(text(
-            """INSERT INTO formula_combinations (name, formula_expr, logic_desc, indicator_refs, created_at, updated_at)
-               VALUES (:name, :formula_expr, :logic_desc, :indicator_refs, :created_at, :updated_at)"""
+            """INSERT INTO formula_combinations (sequence_number, name, formula_expr, logic_desc, indicator_refs, created_at, updated_at)
+               VALUES (:sequence_number, :name, :formula_expr, :logic_desc, :indicator_refs, :created_at, :updated_at)"""
         ), {
-            "name": req.name, "formula_expr": req.formula_expr,
-            "logic_desc": req.logic_desc,
+            "sequence_number": seq,
+            "name": req.name,
+            "formula_expr": req.formula_expr,
+            "logic_desc": logic_desc or "",
             "indicator_refs": json.dumps(req.indicator_refs),
             "created_at": datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat()
         })
         db.commit()
         row = db.execute(text("SELECT last_insert_rowid()")).fetchone()
-        return {"id": row[0], "name": req.name, "ok": True}
+        return {"id": row[0], "sequence_number": seq, "name": req.name, "logic_desc": logic_desc, "ok": True}
+    except HTTPException:
+        raise
     except Exception as e:
         db.rollback()
         raise HTTPException(400, str(e))
@@ -880,19 +1041,67 @@ def create_formula_combination(req: FormulaCombinationRequest, db: Session = Dep
 @app.put("/api/logic/formulas/{id}")
 def update_formula_combination(id: int, req: FormulaCombinationRequest, db: Session = Depends(get_db)):
     """更新一条公式组合"""
-    db.execute(text(
-        """UPDATE formula_combinations
-           SET name=:name, formula_expr=:formula_expr, logic_desc=:logic_desc,
-               indicator_refs=:indicator_refs, updated_at=:updated_at
-           WHERE id=:id"""
-    ), {
-        "id": id, "name": req.name, "formula_expr": req.formula_expr,
-        "logic_desc": req.logic_desc,
-        "indicator_refs": json.dumps(req.indicator_refs),
-        "updated_at": datetime.now().isoformat()
-    })
-    db.commit()
-    return {"id": id, "ok": True}
+    import asyncio
+    try:
+        seq = req.sequence_number.strip() if req.sequence_number else ""
+
+        # 校验序号唯一性（排除自己）
+        if seq:
+            existing = db.execute(text(
+                "SELECT id FROM formula_combinations WHERE sequence_number=:seq AND id!=:id"
+            ), {"seq": seq, "id": id}).fetchone()
+            if existing:
+                raise HTTPException(400, f"序号 {seq} 已存在，请使用其他序号")
+        else:
+            seq = None
+
+        # 获取指标名称映射
+        indicator_map = {}
+        if req.indicator_refs:
+            ids = req.indicator_refs
+            placeholders = ','.join([f':id{i}' for i in range(len(ids))])
+            rows = db.execute(text(
+                f"SELECT id, sequence_number, name FROM indicator_params WHERE id IN ({placeholders})"
+            ), {f'id{i}': v for i, v in enumerate(ids)}).fetchall()
+            for r in rows:
+                indicator_map[r[1] or f"I{r[0]:03d}"] = r[2]
+
+        # 如果需要重新生成描述
+        logic_desc = req.logic_desc
+        if req.auto_desc and not logic_desc:
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor() as pool:
+                        future = pool.submit(asyncio.run, _call_llm_for_description(req.formula_expr, indicator_map))
+                        logic_desc = future.result(timeout=35)
+                else:
+                    logic_desc = loop.run_until_complete(_call_llm_for_description(req.formula_expr, indicator_map))
+            except Exception:
+                logic_desc = ""
+
+        db.execute(text(
+            """UPDATE formula_combinations
+               SET sequence_number=:sequence_number, name=:name, formula_expr=:formula_expr,
+                   logic_desc=:logic_desc, indicator_refs=:indicator_refs, updated_at=:updated_at
+               WHERE id=:id"""
+        ), {
+            "id": id,
+            "sequence_number": seq,
+            "name": req.name,
+            "formula_expr": req.formula_expr,
+            "logic_desc": logic_desc or "",
+            "indicator_refs": json.dumps(req.indicator_refs),
+            "updated_at": datetime.now().isoformat()
+        })
+        db.commit()
+        return {"id": id, "ok": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(400, str(e))
 
 
 @app.delete("/api/logic/formulas/{id}")
@@ -901,6 +1110,259 @@ def delete_formula_combination(id: int, db: Session = Depends(get_db)):
     db.execute(text("DELETE FROM formula_combinations WHERE id=:id"), {"id": id})
     db.commit()
     return {"id": id, "ok": True}
+
+
+# 手动触发LLM描述生成（供前端调用）
+@app.post("/api/logic/formulas/{id}/regenerate-desc")
+def regenerate_formula_desc(id: int, db: Session = Depends(get_db)):
+    """手动重新生成公式描述"""
+    import asyncio
+    try:
+        row = db.execute(text(
+            "SELECT formula_expr, indicator_refs FROM formula_combinations WHERE id=:id"
+        ), {"id": id}).fetchone()
+        if not row:
+            raise HTTPException(404, "公式不存在")
+
+        formula_expr = row[0]
+        indicator_refs = json.loads(row[1]) if row[1] else []
+
+        # 获取指标名称映射
+        indicator_map = {}
+        if indicator_refs:
+            ids = indicator_refs
+            placeholders = ','.join([f':id{i}' for i in range(len(ids))])
+            rows = db.execute(text(
+                f"SELECT id, sequence_number, name FROM indicator_params WHERE id IN ({placeholders})"
+            ), {f'id{i}': v for i, v in enumerate(ids)}).fetchall()
+            for r in rows:
+                indicator_map[r[1] or f"I{r[0]:03d}"] = r[2]
+
+        # 调用LLM
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    future = pool.submit(asyncio.run, _call_llm_for_description(formula_expr, indicator_map))
+                    logic_desc = future.result(timeout=35)
+            else:
+                logic_desc = loop.run_until_complete(_call_llm_for_description(formula_expr, indicator_map))
+        except Exception:
+            logic_desc = ""
+
+        db.execute(text(
+            "UPDATE formula_combinations SET logic_desc=:logic_desc, updated_at=:updated_at WHERE id=:id"
+        ), {"id": id, "logic_desc": logic_desc, "updated_at": datetime.now().isoformat()})
+        db.commit()
+        return {"id": id, "logic_desc": logic_desc, "ok": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(400, str(e))
+
+
+# ============================================================================
+# 内置指标定义（供前端下拉选择）
+# ============================================================================
+
+# 内置指标的详细元数据（描述、参数范围、值类型）
+BUILTIN_META = {
+    "MA5":         {"desc": "5日简单移动平均，常用短期趋势判断", "params": {"period": {"type": "int", "min": 1, "max": 250, "default": 5, "step": 1}}},
+    "MA10":        {"desc": "10日简单移动平均，中短期趋势", "params": {"period": {"type": "int", "min": 1, "max": 250, "default": 10, "step": 1}}},
+    "MA20":        {"desc": "20日简单移动平均，中期趋势", "params": {"period": {"type": "int", "min": 1, "max": 250, "default": 20, "step": 1}}},
+    "MA30":        {"desc": "30日简单移动平均，中期趋势", "params": {"period": {"type": "int", "min": 1, "max": 250, "default": 30, "step": 1}}},
+    "MA60":        {"desc": "60日简单移动平均，中长期趋势", "params": {"period": {"type": "int", "min": 1, "max": 250, "default": 60, "step": 1}}},
+    "MA90":        {"desc": "90日简单移动平均，中长期趋势", "params": {"period": {"type": "int", "min": 1, "max": 250, "default": 90, "step": 1}}},
+    "MA120":       {"desc": "120日简单移动平均，长期趋势", "params": {"period": {"type": "int", "min": 1, "max": 250, "default": 120, "step": 1}}},
+    "MA250":       {"desc": "250日简单移动平均（年线），长期趋势", "params": {"period": {"type": "int", "min": 1, "max": 250, "default": 250, "step": 1}}},
+    "RSI_6":       {"desc": "6日相对强弱指数，超短期超买超卖（>80超买，<20超卖）", "params": {"period": {"type": "int", "min": 2, "max": 24, "default": 6, "step": 1}}},
+    "RSI_12":      {"desc": "12日相对强弱指数，短期超买超卖（>70超买，<30超卖）", "params": {"period": {"type": "int", "min": 2, "max": 24, "default": 12, "step": 1}}},
+    "RSI_24":      {"desc": "24日相对强弱指数，中期超买超卖", "params": {"period": {"type": "int", "min": 2, "max": 24, "default": 24, "step": 1}}},
+    "KDJ_K":       {"desc": "KDJ指标的K值（随机指标），>80超买，<20超卖", "params": {"period": {"type": "int", "min": 2, "max": 30, "default": 9, "step": 1}}},
+    "KDJ_D":       {"desc": "KDJ指标的D值，K的移动平均，更平滑", "params": {"period": {"type": "int", "min": 2, "max": 30, "default": 3, "step": 1}}},
+    "KDJ_J":       {"desc": "KDJ指标的J值，敏感度最高，可超过100或低于0", "params": {"period": {"type": "int", "min": 2, "max": 30, "default": 3, "step": 1}}},
+    "MACD_DIF":    {"desc": "MACD快线（EMA快-慢差值），金叉/死叉判断趋势", "params": {"fast": {"type": "int", "min": 2, "max": 50, "default": 12, "step": 1}, "slow": {"type": "int", "min": 5, "max": 100, "default": 26, "step": 1}}},
+    "MACD_DEA":    {"desc": "MACD信号线（DIF的EMA），与DIF交叉判断买卖点", "params": {"fast": {"type": "int", "min": 2, "max": 50, "default": 12, "step": 1}, "slow": {"type": "int", "min": 5, "max": 100, "default": 26, "step": 1}, "signal": {"type": "int", "min": 2, "max": 50, "default": 9, "step": 1}}},
+    "MACD_HIST":   {"desc": "MACD柱状图（DIF-DEA×2），红柱多头，绿柱空头", "params": {"fast": {"type": "int", "min": 2, "max": 50, "default": 12, "step": 1}, "slow": {"type": "int", "min": 5, "max": 100, "default": 26, "step": 1}, "signal": {"type": "int", "min": 2, "max": 50, "default": 9, "step": 1}}},
+    "BOLL_U":      {"desc": "布林带上轨（MA+2倍标准差），价格上穿可能回调", "params": {"period": {"type": "int", "min": 5, "max": 60, "default": 20, "step": 1}}},
+    "BOLL_M":      {"desc": "布林带中轨（MA），作为中轴参考", "params": {"period": {"type": "int", "min": 5, "max": 60, "default": 20, "step": 1}}},
+    "BOLL_L":      {"desc": "布林带下轨（MA-2倍标准差），价格下穿可能反弹", "params": {"period": {"type": "int", "min": 5, "max": 60, "default": 20, "step": 1}}},
+    "ATR":         {"desc": "平均真实波幅，衡量价格波动剧烈程度", "params": {"period": {"type": "int", "min": 1, "max": 50, "default": 14, "step": 1}}},
+    "ATR_7":       {"desc": "7日平均真实波幅，短期波动率", "params": {"period": {"type": "int", "min": 1, "max": 50, "default": 7, "step": 1}}},
+    "ATR_21":      {"desc": "21日平均真实波幅，中期波动率", "params": {"period": {"type": "int", "min": 1, "max": 50, "default": 21, "step": 1}}},
+    "VOL_RATIO":   {"desc": "量比（当日成交量/5日平均成交量），>1.5放量，<0.5缩量", "params": {"period": {"type": "int", "min": 1, "max": 20, "default": 5, "step": 1}}},
+    "VOL_MA5":     {"desc": "5日均量，反映短期成交量平均水平", "params": {"period": {"type": "int", "min": 1, "max": 20, "default": 5, "step": 1}}},
+    "VOL_MA10":    {"desc": "10日均量，反映中期成交量平均水平", "params": {"period": {"type": "int", "min": 1, "max": 60, "default": 10, "step": 1}}},
+    "RETURN":      {"desc": "收益率（当日涨跌幅），正值为上涨，负值为下跌", "params": {"period": {"type": "int", "min": 1, "max": 20, "default": 1, "step": 1}}},
+    "CLOSE_RATE_1":{"desc": "1日收益率，等同于RETURN", "params": {"period": {"type": "int", "min": 1, "max": 20, "default": 1, "step": 1}}},
+    "CLOSE_RATE_3":{"desc": "3日收益率，短期趋势动量", "params": {"period": {"type": "int", "min": 1, "max": 20, "default": 3, "step": 1}}},
+    "CLOSE_RATE_5":{"desc": "5日收益率，中短期动量", "params": {"period": {"type": "int", "min": 1, "max": 20, "default": 5, "step": 1}}},
+    "MA20_DEVIATION":{"desc": "收盘价对20日均线的偏离度（正=在均线上方）", "params": {"ma_period": {"type": "int", "min": 5, "max": 250, "default": 20, "step": 1}}},
+    "MA60_DEVIATION":{"desc": "收盘价对60日均线的偏离度", "params": {"ma_period": {"type": "int", "min": 5, "max": 250, "default": 60, "step": 1}}},
+    "AMPLITUDE":   {"desc": "当日振幅（最高价-最低价）/最低价，反映日内波动", "params": {}},
+    "MA5_GT_MA10":  {"desc": "布尔：MA5 > MA10（短期均线上穿中长期均线=多头信号）", "params": {}},
+    "MA5_GT_MA20":  {"desc": "布尔：MA5 > MA20", "params": {}},
+    "MA10_GT_MA20": {"desc": "布尔：MA10 > MA20", "params": {}},
+    "MA5_GT_MA60":  {"desc": "布尔：MA5 > MA60", "params": {}},
+    "MA20_GT_MA60": {"desc": "布尔：MA20 > MA60", "params": {}},
+    "CLOSE_GT_MA5": {"desc": "布尔：收盘价 > MA5", "params": {}},
+    "CLOSE_GT_MA10":{"desc": "布尔：收盘价 > MA10", "params": {}},
+    "CLOSE_GT_MA20":{"desc": "布尔：收盘价 > MA20", "params": {}},
+    "CLOSE_GT_MA60":{"desc": "布尔：收盘价 > MA60", "params": {}},
+}
+
+
+@app.get("/api/logic/builtin-indicators")
+def list_builtin_indicators():
+    """返回所有内置指标的元数据，供前端下拉选择"""
+    return [
+        {
+            "name": name,
+            "desc": BUILTIN_META.get(name, {}).get("desc", ""),
+            "params": BUILTIN_META.get(name, {}).get("params", {}),
+        }
+        for name, *_ in BUILTIN_INDICATORS
+    ]
+
+
+# ============================================================================
+# 回测功能
+# ============================================================================
+
+class BacktestRunRequest(BaseModel):
+    formula_id: int
+    stock_code: str
+    start_date: str
+    end_date: str
+    initial_capital: float = 100000
+    position_type: str = "percent_capital"  # percent_capital | fixed_amount
+    position_value: float = 10  # 10% of capital or fixed amount
+    stop_loss_type: str = "percent"  # percent | fixed
+    stop_loss_value: float = -5  # -5%
+    take_profit_type: str = "percent"
+    take_profit_value: float = 15  # +15%
+    entry_price_type: str = "open"  # open | close | avg
+
+
+@app.post("/api/backtest/run")
+def run_backtest(req: BacktestRunRequest, db: Session = Depends(get_db)):
+    """运行回测"""
+    from backtest_engine import run_backtest as engine_run_backtest
+    import time
+    start_time = time.time()
+
+    result = engine_run_backtest(
+        db=db,
+        stock_code=req.stock_code,
+        formula_id=req.formula_id,
+        start_date=req.start_date,
+        end_date=req.end_date,
+        initial_capital=req.initial_capital,
+        position_type=req.position_type,
+        position_value=req.position_value,
+        stop_loss_type=req.stop_loss_type,
+        stop_loss_value=req.stop_loss_value,
+        take_profit_type=req.take_profit_type,
+        take_profit_value=req.take_profit_value,
+        entry_price_type=req.entry_price_type
+    )
+
+    elapsed = time.time() - start_time
+
+    if "error" in result:
+        raise HTTPException(400, result["error"])
+
+    # 保存结果到数据库
+    result_json = {
+        "config_id": req.formula_id,
+        "stock_code": req.stock_code,
+        "total_trades": result.get("total_trades", 0),
+        "win_trades": result.get("win_trades", 0),
+        "loss_trades": result.get("loss_trades", 0),
+        "total_return": result.get("total_return", 0),
+        "max_drawdown": result.get("max_drawdown", 0),
+        "sharpe_ratio": result.get("sharpe_ratio", 0),
+        "profit_factor": result.get("profit_factor", 0),
+        "equity_curve": json.dumps(result.get("equity_curve", [])),
+        "trade_log": json.dumps(result.get("trade_log", [])),
+        "created_at": datetime.now().isoformat()
+    }
+
+    db.execute(text(
+        """INSERT INTO backtest_results
+           (config_id, stock_code, total_trades, win_trades, loss_trades,
+            total_return, max_drawdown, sharpe_ratio, profit_factor,
+            equity_curve, trade_log, created_at)
+           VALUES (:config_id, :stock_code, :total_trades, :win_trades, :loss_trades,
+                   :total_return, :max_drawdown, :sharpe_ratio, :profit_factor,
+                   :equity_curve, :trade_log, :created_at)"""
+    ), result_json)
+    db.commit()
+
+    result_id = db.execute(text("SELECT last_insert_rowid()")).fetchone()[0]
+
+    return {
+        "result_id": result_id,
+        "elapsed_seconds": round(elapsed, 2),
+        **result
+    }
+
+
+@app.get("/api/backtest/results/{result_id}")
+def get_backtest_result(result_id: int, db: Session = Depends(get_db)):
+    """获取回测结果"""
+    row = db.execute(text(
+        """SELECT id, config_id, stock_code, total_trades, win_trades, loss_trades,
+                  total_return, max_drawdown, sharpe_ratio, profit_factor,
+                  equity_curve, trade_log, created_at
+           FROM backtest_results WHERE id=:id"""
+    ), {"id": result_id}).fetchone()
+
+    if not row:
+        raise HTTPException(404, "Result not found")
+
+    return {
+        "id": row[0],
+        "config_id": row[1],
+        "stock_code": row[2],
+        "total_trades": row[3],
+        "win_trades": row[4],
+        "loss_trades": row[5],
+        "total_return": row[6],
+        "max_drawdown": row[7],
+        "sharpe_ratio": row[8],
+        "profit_factor": row[9],
+        "equity_curve": json.loads(row[10]) if row[10] else [],
+        "trade_log": json.loads(row[11]) if row[11] else [],
+        "created_at": row[12]
+    }
+
+
+@app.get("/api/backtest/recent")
+def list_recent_backtest_results(db: Session = Depends(get_db), limit: int = 10):
+    """列出最近的回测结果"""
+    rows = db.execute(text(
+        """SELECT id, config_id, stock_code, total_trades, total_return,
+                  max_drawdown, win_trades, loss_trades, created_at
+           FROM backtest_results ORDER BY created_at DESC LIMIT :limit"""
+    ), {"limit": limit}).fetchall()
+
+    return [
+        {
+            "id": r[0],
+            "config_id": r[1],
+            "stock_code": r[2],
+            "total_trades": r[3],
+            "total_return": r[4],
+            "max_drawdown": r[5],
+            "win_trades": r[6],
+            "loss_trades": r[7],
+            "created_at": r[8]
+        }
+        for r in rows
+    ]
 
 
 # ============================================================================

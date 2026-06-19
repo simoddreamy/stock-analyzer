@@ -48,3 +48,10 @@ export const listFormulaCombinations = () => req('/logic/formulas')
 export const createFormulaCombination = (payload) => req('/logic/formulas', { method: 'POST', body: JSON.stringify(payload) })
 export const updateFormulaCombination = (id, payload) => req(`/logic/formulas/${id}`, { method: 'PUT', body: JSON.stringify(payload) })
 export const deleteFormulaCombination = (id) => req(`/logic/formulas/${id}`, { method: 'DELETE' })
+export const getBuiltinIndicators = () => req('/logic/builtin-indicators')
+export const regenerateFormulaDesc = (id) => req(`/logic/formulas/${id}/regenerate-desc`, { method: 'POST' })
+
+// 回测 API
+export const runBacktest = (payload) => req('/backtest/run', { method: 'POST', body: JSON.stringify(payload) })
+export const getBacktestResult = (resultId) => req(`/backtest/results/${resultId}`)
+export const listRecentBacktestResults = () => req('/backtest/recent')

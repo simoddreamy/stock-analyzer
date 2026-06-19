@@ -254,6 +254,7 @@ def create_tables():
         for new_table_sql in [
             """CREATE TABLE IF NOT EXISTS indicator_params (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sequence_number TEXT UNIQUE,
                 name TEXT UNIQUE NOT NULL,
                 category TEXT DEFAULT 'custom',
                 param_config TEXT NOT NULL,
@@ -263,18 +264,73 @@ def create_tables():
             )""",
             """CREATE TABLE IF NOT EXISTS formula_combinations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sequence_number TEXT UNIQUE,
                 name TEXT NOT NULL,
                 formula_expr TEXT NOT NULL,
                 logic_desc TEXT,
                 indicator_refs TEXT,
                 created_at TEXT,
                 updated_at TEXT
+            )""",
+            """CREATE TABLE IF NOT EXISTS backtest_configs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                formula_id INTEGER,
+                stock_code TEXT,
+                start_date TEXT,
+                end_date TEXT,
+                initial_capital REAL DEFAULT 100000,
+                position_type TEXT DEFAULT 'percent_capital',
+                position_value REAL DEFAULT 10,
+                stop_loss_type TEXT DEFAULT 'percent',
+                stop_loss_value REAL DEFAULT -5,
+                take_profit_type TEXT DEFAULT 'percent',
+                take_profit_value REAL DEFAULT 15,
+                entry_price_type TEXT DEFAULT 'open',
+                created_at TEXT,
+                updated_at TEXT
+            )""",
+            """CREATE TABLE IF NOT EXISTS backtest_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                config_id INTEGER,
+                stock_code TEXT,
+                total_trades INTEGER,
+                win_trades INTEGER,
+                loss_trades INTEGER,
+                total_return REAL,
+                max_drawdown REAL,
+                sharpe_ratio REAL,
+                profit_factor REAL,
+                equity_curve TEXT,
+                trade_log TEXT,
+                created_at TEXT
             )"""
         ]:
             try:
                 conn.execute(text(new_table_sql))
             except Exception:
                 pass
+
+        # Migration: add sequence_number columns if missing (for existing tables)
+        try:
+            conn.execute(text("ALTER TABLE indicator_params ADD COLUMN sequence_number TEXT"))
+        except Exception:
+            pass  # column already exists
+        try:
+            conn.execute(text("ALTER TABLE formula_combinations ADD COLUMN sequence_number TEXT"))
+        except Exception:
+            pass  # column already exists
+
+        # Migration: add sequence_number unique index if missing
+        try:
+            conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS idx_indicator_params_seq ON indicator_params(sequence_number)"))
+        except Exception:
+            pass
+        try:
+            conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS idx_formula_combinations_seq ON formula_combinations(sequence_number)"))
+        except Exception:
+            pass
+
         conn.commit()
 
 

@@ -5,6 +5,7 @@ const routes = [
   { path: '/stocks', component: () => import('./views/StocksView.vue') },
   { path: '/explore', component: () => import('./views/ExploreView.vue') },
   { path: '/logic-config', component: () => import('./views/LogicConfigView.vue') },
+  { path: '/backtest', component: () => import('./views/BacktestView.vue') },
   { path: '/settings', component: () => import('./views/SettingsView.vue') },
 ]
 

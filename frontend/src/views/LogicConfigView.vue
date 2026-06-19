@@ -5,11 +5,11 @@
     </div>
 
     <div class="two-panel">
-      <!-- ==================== Part 1: 指标参数配置 ==================== -->
+      <!-- ==================== Part 1: 预置条件（指标参数库）==================== -->
       <div class="panel panel-left">
         <div class="panel-header">
-          <h3>指标参数库</h3>
-          <button class="btn btn-small" @click="showAddIndicator = true">+ 新增指标</button>
+          <h3>预置条件库</h3>
+          <button class="btn btn-small" @click="openAddIndicator">+ 新增预置条件</button>
         </div>
 
         <div class="indicator-list" v-if="indicators.length > 0">
@@ -21,12 +21,17 @@
             @click="selectIndicator(ind)"
           >
             <div class="card-header">
+              <span class="ind-seq">[{{ ind.sequence_number }}]</span>
               <span class="ind-name">{{ ind.name }}</span>
-              <span class="ind-category">{{ ind.category }}</span>
             </div>
             <div class="ind-params" v-if="ind.param_config">
-              <span v-for="(v, k) in ind.param_config" :key="k" class="param-tag">
-                {{ k }}: [{{ v.min }}, {{ v.max }}]
+              <!-- 显示指标名 + 阈值条件 -->
+              <span class="param-tag condition-tag" v-if="ind.param_config.threshold">
+                {{ ind.name }} {{ ind.param_config.threshold.op || '=' }} {{ ind.param_config.threshold.value }}
+              </span>
+              <!-- 显示参数值（排除threshold） -->
+              <span v-for="(v, k) in ind.param_config" :key="k" class="param-tag" v-if="k !== 'threshold'">
+                {{ k }}{{ typeof v === 'object' ? (v.op || '=') : '=' }}{{ typeof v === 'object' ? (v.min !== undefined ? v.min : v.value) : v }}
               </span>
             </div>
             <div class="ind-desc" v-if="ind.description">{{ ind.description }}</div>
@@ -36,45 +41,151 @@
             </div>
           </div>
         </div>
-        <div class="empty-hint" v-else>暂无指标配置，点击上方按钮添加</div>
+        <div class="empty-hint" v-else>暂无预置条件，点击上方按钮添加</div>
 
-        <!-- 新增/编辑指标 Modal -->
-        <div class="modal" v-if="showAddIndicator || editingIndicator" @click.self="closeIndicatorModal">
+        <!-- 新增/编辑预置条件 Modal -->
+        <div class="modal" v-if="showIndicatorModal" @click.self="closeIndicatorModal">
           <div class="modal-content">
-            <h3>{{ editingIndicator ? '编辑指标' : '新增指标' }}</h3>
+            <h3>{{ editingIndicator ? '编辑预置条件' : '新增预置条件' }}</h3>
 
+            <!-- 指标下拉 -->
             <div class="field">
-              <label>指标名称</label>
-              <input v-model="indForm.name" class="input" placeholder="如: RSI, MACD, VOL_RATIO" />
-            </div>
-
-            <div class="field">
-              <label>分类</label>
-              <select v-model="indForm.category" class="select">
-                <option value="custom">自定义</option>
-                <option value="momentum">动量类</option>
-                <option value="volume">成交量类</option>
-                <option value="volatility">波动率类</option>
-                <option value="trend">趋势类</option>
+              <label>选择指标</label>
+              <select v-model="indForm.builtinName" class="select" @change="onBuiltinSelected" :disabled="!!editingIndicator">
+                <optgroup label="-- 均线类 MA --">
+                  <option v-for="ind in builtinGroup('ma')" :key="ind.name" :value="ind.name">
+                    {{ ind.name }} - {{ ind.desc.substring(0, 15) }}...
+                  </option>
+                </optgroup>
+                <optgroup label="-- RSI 类 --">
+                  <option v-for="ind in builtinGroup('rsi')" :key="ind.name" :value="ind.name">
+                    {{ ind.name }} - {{ ind.desc.substring(0, 15) }}...
+                  </option>
+                </optgroup>
+                <optgroup label="-- KDJ 类 --">
+                  <option v-for="ind in builtinGroup('kdj')" :key="ind.name" :value="ind.name">
+                    {{ ind.name }} - {{ ind.desc.substring(0, 15) }}...
+                  </option>
+                </optgroup>
+                <optgroup label="-- MACD 类 --">
+                  <option v-for="ind in builtinGroup('macd')" :key="ind.name" :value="ind.name">
+                    {{ ind.name }} - {{ ind.desc.substring(0, 15) }}...
+                  </option>
+                </optgroup>
+                <optgroup label="-- 布林带类 --">
+                  <option v-for="ind in builtinGroup('boll')" :key="ind.name" :value="ind.name">
+                    {{ ind.name }} - {{ ind.desc.substring(0, 15) }}...
+                  </option>
+                </optgroup>
+                <optgroup label="-- 波动率/ATR --">
+                  <option v-for="ind in builtinGroup('atr')" :key="ind.name" :value="ind.name">
+                    {{ ind.name }} - {{ ind.desc.substring(0, 15) }}...
+                  </option>
+                </optgroup>
+                <optgroup label="-- 成交量类 --">
+                  <option v-for="ind in builtinGroup('vol')" :key="ind.name" :value="ind.name">
+                    {{ ind.name }} - {{ ind.desc.substring(0, 15) }}...
+                  </option>
+                </optgroup>
+                <optgroup label="-- 动量/收益率 --">
+                  <option v-for="ind in builtinGroup('return')" :key="ind.name" :value="ind.name">
+                    {{ ind.name }} - {{ ind.desc.substring(0, 15) }}...
+                  </option>
+                </optgroup>
+                <optgroup label="-- 偏离度 --">
+                  <option v-for="ind in builtinGroup('deviation')" :key="ind.name" :value="ind.name">
+                    {{ ind.name }} - {{ ind.desc.substring(0, 15) }}...
+                  </option>
+                </optgroup>
+                <optgroup label="-- 布尔/关系 --">
+                  <option v-for="ind in builtinGroup('bool')" :key="ind.name" :value="ind.name">
+                    {{ ind.name }} - {{ ind.desc.substring(0, 15) }}...
+                  </option>
+                </optgroup>
+                <optgroup label="-- 其他 --">
+                  <option v-for="ind in builtinGroup('other')" :key="ind.name" :value="ind.name">
+                    {{ ind.name }} - {{ ind.desc.substring(0, 15) }}...
+                  </option>
+                </optgroup>
               </select>
             </div>
 
-            <div class="field">
-              <label>描述说明</label>
-              <input v-model="indForm.description" class="input" placeholder="选填" />
+            <!-- 指标说明卡片 -->
+            <div class="builtin-desc-card" v-if="indForm.selectedBuiltin">
+              <div class="builtin-desc-title">{{ indForm.selectedBuiltin.name }} 指标说明</div>
+              <div class="builtin-desc-text">{{ indForm.selectedBuiltin.desc }}</div>
             </div>
 
+            <!-- 序号（可编辑） -->
             <div class="field">
-              <label>参数范围配置</label>
-              <div class="param-config-list">
-                <div v-for="(param, pIdx) in indForm.paramConfigList" :key="pIdx" class="param-row">
-                  <input v-model="param.name" class="input input-small" placeholder="参数名" />
-                  <input v-model.number="param.min" type="number" class="input input-tiny" placeholder="最小" step="0.01" />
-                  <input v-model.number="param.max" type="number" class="input input-tiny" placeholder="最大" step="0.01" />
-                  <button class="btn btn-tiny btn-danger" @click="removeParam(pIdx)">×</button>
-                </div>
-                <button class="btn btn-tiny" @click="addParam">+ 添加参数</button>
+              <label>序号（系统自动生成，可修改）</label>
+              <input v-model="indForm.sequenceNumber" class="input" placeholder="如: I001（留空自动生成）" />
+            </div>
+
+            <!-- 指标名称（自动填充，只读） -->
+            <div class="field">
+              <label>指标名称</label>
+              <input :value="indForm.name" class="input" disabled />
+            </div>
+
+            <!-- 描述说明（多行文本框） -->
+            <div class="field">
+              <label>描述说明（选填，描述此预置条件的用途）</label>
+              <textarea v-model="indForm.description" class="textarea" rows="3"
+                placeholder="例如：用于短线RSI超买策略，当RSI超过70时认为超买"></textarea>
+            </div>
+
+            <!-- 阈值条件配置 -->
+            <div class="field" v-if="indForm.selectedBuiltin">
+              <label>阈值条件（指标值与阈值的比较，如 RSI &gt; 30）</label>
+              <div class="threshold-config">
+                <span class="threshold-label">当</span>
+                <span class="threshold-indicator">{{ indForm.name }}</span>
+                <select v-model="indForm.thresholdOp" class="select op-select">
+                  <option value=">">&gt;（大于）</option>
+                  <option value="<">&lt;（小于）</option>
+                  <option value=">=">&gt;=（大于等于）</option>
+                  <option value="<=">&lt;=（小于等于）</option>
+                  <option value="=">=（等于）</option>
+                </select>
+                <input v-model.number="indForm.thresholdValue" type="number" class="input input-tiny" step="1" placeholder="阈值" />
+                <span class="threshold-label">时触发</span>
               </div>
+            </div>
+
+            <!-- 参数值配置 -->
+            <div class="field" v-if="indForm.selectedBuiltin && indForm.paramConfigList && indForm.paramConfigList.length > 0">
+              <label>参数值配置</label>
+              <div class="param-config-list">
+                <div v-for="(paramCfg, pName) in indForm.selectedBuiltin.params" :key="pName" class="param-row">
+                  <span class="param-name">{{ pName }}</span>
+                  <select
+                    v-model="(indForm.paramConfigList[$index] || {}).op"
+                    class="select op-select"
+                  >
+                    <option value=">">大于 (&gt;)</option>
+                    <option value="<">小于 (&lt;)</option>
+                    <option value=">=">大于等于 (&gt;=)</option>
+                    <option value="<=">小于等于 (&lt;=)</option>
+                    <option value="=">等于 (=)</option>
+                  </select>
+                  <input
+                    v-model.number="(indForm.paramConfigList[$index] || {}).value"
+                    type="number"
+                    class="input input-tiny"
+                    :min="paramCfg.min"
+                    :max="paramCfg.max"
+                    :step="paramCfg.step || 1"
+                    placeholder="阈值"
+                  />
+                  <span class="param-hint">范围: [{{ paramCfg.min }}, {{ paramCfg.max }}]</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 无参数指标提示 -->
+            <div class="param-tip" v-if="indForm.selectedBuiltin && Object.keys(indForm.selectedBuiltin.params || {}).length === 0">
+              此指标为无参数指标（如布尔型、振幅等），无需配置参数
             </div>
 
             <div class="modal-actions">
@@ -89,7 +200,7 @@
       <!-- ==================== Part 2: 公式组合配置 ==================== -->
       <div class="panel panel-right">
         <div class="panel-header">
-          <h3>指标公式组合</h3>
+          <h3>公式组合库</h3>
           <button class="btn btn-small" @click="showAddFormula = true">+ 新增公式</button>
         </div>
 
@@ -102,6 +213,7 @@
             @click="selectFormula(fm)"
           >
             <div class="card-header">
+              <span class="fm-seq">[{{ fm.sequence_number }}]</span>
               <span class="fm-name">{{ fm.name }}</span>
             </div>
             <div class="fm-expr">{{ fm.formula_expr }}</div>
@@ -124,13 +236,21 @@
           <div class="modal-content modal-wide">
             <h3>{{ editingFormula ? '编辑公式' : '新增公式组合' }}</h3>
 
+            <!-- 序号 -->
+            <div class="field">
+              <label>序号（系统自动生成，可修改）</label>
+              <input v-model="fmForm.sequenceNumber" class="input" placeholder="如: F001（留空自动生成）" />
+            </div>
+
+            <!-- 公式名称 -->
             <div class="field">
               <label>公式名称</label>
               <input v-model="fmForm.name" class="input" placeholder="如: RSI成交量共振, 突破策略" />
             </div>
 
+            <!-- 引用预置条件 -->
             <div class="field">
-              <label>引用指标</label>
+              <label>引用预置条件（选中后自动生成表达式）</label>
               <div class="indicator-picker">
                 <div
                   v-for="ind in indicators"
@@ -139,39 +259,44 @@
                   :class="{ selected: fmForm.indicatorRefs.includes(ind.id) }"
                   @click="toggleIndicatorRef(ind.id)"
                 >
-                  {{ ind.name }}
+                  [{{ ind.sequence_number }}] {{ ind.name }}
                 </div>
               </div>
-              <div class="empty-hint" v-if="indicators.length === 0">请先在左侧添加指标</div>
+              <div class="empty-hint" v-if="indicators.length === 0">请先在左侧添加预置条件</div>
             </div>
 
+            <!-- 公式表达式（自动生成） -->
             <div class="field">
-              <label>公式表达式</label>
+              <label>公式表达式（根据所选预置条件自动生成）</label>
               <div class="expr-builder">
                 <div class="expr-hint">
-                  从已选指标中选择或手动输入表达式<br />
-                  示例: <code>RSI_6 &gt; 0.5 AND VOL_RATIO &gt; 1.2</code>
+                  表达式由所选预置条件的序号组成，使用 AND/OR/括号 连接<br />
+                  示例: <code>I001 AND I002</code> 或 <code>I001 OR (I002 AND I003)</code>
                 </div>
                 <textarea v-model="fmForm.formula_expr" class="textarea" rows="3"
-                  placeholder="如: RSI_6 > 0.5 AND VOL_RATIO > 1.2"></textarea>
+                  placeholder="从左侧选择预置条件后将自动生成"></textarea>
                 <div class="quick-ops">
                   <button class="btn btn-tiny" @click="insertOp(' AND ')">AND</button>
                   <button class="btn btn-tiny" @click="insertOp(' OR ')">OR</button>
-                  <button class="btn btn-tiny" @click="insertOp(' > ')">&gt;</button>
-                  <button class="btn btn-tiny" @click="insertOp(' < ')">&lt;</button>
-                  <button class="btn btn-tiny" @click="insertOp(' >= ')">&gt;=</button>
-                  <button class="btn btn-tiny" @click="insertOp(' <= ')">&lt;=</button>
-                  <button class="btn btn-tiny" @click="insertOp(' + ')">+</button>
-                  <button class="btn btn-tiny" @click="insertOp(' - ')">-</button>
-                  <button class="btn btn-tiny" @click="insertOp(' * ')">*</button>
-                  <button class="btn btn-tiny" @click="insertOp(' / ')">/</button>
+                  <button class="btn btn-tiny" @click="insertOp('(')">(</button>
+                  <button class="btn btn-tiny" @click="insertOp(')')">)</button>
+                  <button class="btn btn-tiny" @click="regenerateExpr" :disabled="fmForm.indicatorRefs.length === 0" title="从已选预置条件重新生成表达式">
+                    重新生成
+                  </button>
                 </div>
               </div>
             </div>
 
+            <!-- 逻辑描述（大模型自动生成） -->
             <div class="field">
-              <label>逻辑说明</label>
-              <input v-model="fmForm.logic_desc" class="input" placeholder="选填，说明此公式的逻辑" />
+              <label>逻辑描述（大模型自动生成）</label>
+              <div class="logic-desc-row">
+                <textarea v-model="fmForm.logicDesc" class="textarea" rows="2" readonly
+                  placeholder="大模型将根据公式表达式和引用的预置条件自动生成描述"></textarea>
+                <button class="btn btn-tiny" @click="regenerateDesc" :disabled="regenerating">
+                  {{ regenerating ? '生成中...' : '重新生成' }}
+                </button>
+              </div>
             </div>
 
             <div class="modal-actions">
@@ -187,25 +312,41 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import * as api from '@/utils/api'
 
 const indicators = ref([])
 const formulas = ref([])
+const builtinIndicators = ref([])
 const selectedIndicator = ref(null)
 const selectedFormula = ref(null)
 
 // Indicator modal state
-const showAddIndicator = ref(false)
+const showIndicatorModal = ref(false)
 const editingIndicator = ref(null)
-const indForm = ref({ name: '', category: 'custom', description: '', paramConfigList: [{ name: '', min: 0, max: 100 }] })
+const indForm = ref({
+  builtinName: '',
+  sequenceNumber: '',
+  name: '',
+  selectedBuiltin: null,
+  description: '',
+  paramConfigList: []
+})
 const indError = ref('')
 
 // Formula modal state
 const showAddFormula = ref(false)
 const editingFormula = ref(null)
-const fmForm = ref({ name: '', formula_expr: '', logic_desc: '', indicatorRefs: [] })
+const fmForm = ref({
+  sequenceNumber: '',
+  name: '',
+  formula_expr: '',
+  logicDesc: '',
+  indicatorRefs: [],
+  autoDesc: true
+})
 const fmError = ref('')
+const regenerating = ref(false)
 
 onMounted(async () => {
   await loadAll()
@@ -215,9 +356,66 @@ async function loadAll() {
   try {
     indicators.value = await api.listIndicators()
     formulas.value = await api.listFormulaCombinations()
+    builtinIndicators.value = await api.getBuiltinIndicators()
   } catch (e) {
     console.error('Failed to load:', e)
   }
+}
+
+// ----- Builtin indicators grouping -----
+const builtinGroups = {
+  ma: ['MA5','MA10','MA20','MA30','MA60','MA90','MA120','MA250'],
+  rsi: ['RSI_6','RSI_12','RSI_24'],
+  kdj: ['KDJ_K','KDJ_D','KDJ_J'],
+  macd: ['MACD_DIF','MACD_DEA','MACD_HIST'],
+  boll: ['BOLL_U','BOLL_M','BOLL_L'],
+  atr: ['ATR','ATR_7','ATR_21'],
+  vol: ['VOL_RATIO','VOL_MA5','VOL_MA10'],
+  return: ['RETURN','CLOSE_RATE_1','CLOSE_RATE_3','CLOSE_RATE_5'],
+  deviation: ['MA20_DEVIATION','MA60_DEVIATION'],
+  bool: ['MA5_GT_MA10','MA5_GT_MA20','MA10_GT_MA20','MA5_GT_MA60','MA20_GT_MA60','CLOSE_GT_MA5','CLOSE_GT_MA10','CLOSE_GT_MA20','CLOSE_GT_MA60'],
+  other: ['AMPLITUDE']
+}
+
+function builtinGroup(group) {
+  return builtinIndicators.value.filter(ind => builtinGroups[group]?.includes(ind.name))
+}
+
+// ----- Indicator form -----
+function openAddIndicator() {
+  editingIndicator.value = null
+  indForm.value = {
+    builtinName: '',
+    sequenceNumber: '',
+    name: '',
+    selectedBuiltin: null,
+    description: '',
+    paramConfigList: [{ name: '', op: '=', value: 0 }],
+    thresholdOp: '>',
+    thresholdValue: 30
+  }
+  showIndicatorModal.value = true
+}
+
+function onBuiltinSelected() {
+  const name = indForm.value.builtinName
+  const bi = builtinIndicators.value.find(b => b.name === name)
+  if (!bi) return
+
+  indForm.value.selectedBuiltin = bi
+  indForm.value.name = bi.name
+
+  // Auto-fill param config from builtin params (single value, with operator)
+  const params = bi.params || {}
+  const list = []
+  for (const [pName, pCfg] of Object.entries(params)) {
+    list.push({
+      name: pName,
+      op: '=',
+      value: pCfg.default !== undefined ? pCfg.default : (pCfg.min !== undefined ? pCfg.min : 0)
+    })
+  }
+  indForm.value.paramConfigList = list
 }
 
 function selectIndicator(ind) {
@@ -230,58 +428,82 @@ function selectFormula(fm) {
 
 function getIndicatorName(id) {
   const ind = indicators.value.find(i => i.id === id)
-  return ind ? ind.name : `指标${id}`
+  return ind ? `[${ind.sequence_number || ind.name}] ${ind.name}` : `指标${id}`
 }
 
 // ----- Indicator CRUD -----
 function editIndicator(ind) {
   editingIndicator.value = ind
-  // param_config is a dict like {period: {min:5, max:20}}
-  // convert to paramConfigList for the form
-  const list = []
+  indForm.value = {
+    builtinName: ind.name,
+    sequenceNumber: ind.sequence_number || '',
+    name: ind.name,
+    selectedBuiltin: builtinIndicators.value.find(b => b.name === ind.name) || null,
+    description: ind.description || '',
+    paramConfigList: [],
+    thresholdOp: '>',
+    thresholdValue: 30
+  }
+  // Fill param config (handle both old scalar format and new {op, value} format)
+  // Skip 'threshold' key - handle it separately below
   if (ind.param_config) {
+    const thresholdCfg = ind.param_config['threshold']
+    if (thresholdCfg && typeof thresholdCfg === 'object') {
+      indForm.value.thresholdOp = thresholdCfg.op || '>'
+      indForm.value.thresholdValue = thresholdCfg.value !== undefined ? thresholdCfg.value : 0
+    }
+
     for (const [k, v] of Object.entries(ind.param_config)) {
-      list.push({ name: k, min: v.min, max: v.max })
+      if (k === 'threshold') continue  // skip, handled above
+      let op = '='
+      let value = 0
+      if (typeof v === 'object') {
+        op = v.op !== undefined ? v.op : '='
+        value = v.value !== undefined ? v.value : (v.min !== undefined ? v.min : 0)
+      } else {
+        value = v
+      }
+      indForm.value.paramConfigList.push({ name: k, op, value })
     }
   }
-  if (list.length === 0) list.push({ name: '', min: 0, max: 100 })
-  indForm.value = { name: ind.name, category: ind.category || 'custom', description: ind.description || '', paramConfigList: list }
+  showIndicatorModal.value = true
 }
 
 function closeIndicatorModal() {
-  showAddIndicator.value = false
+  showIndicatorModal.value = false
   editingIndicator.value = null
-  indForm.value = { name: '', category: 'custom', description: '', paramConfigList: [{ name: '', min: 0, max: 100 }] }
   indError.value = ''
-}
-
-function addParam() {
-  indForm.value.paramConfigList.push({ name: '', min: 0, max: 100 })
-}
-
-function removeParam(idx) {
-  indForm.value.paramConfigList.splice(idx, 1)
 }
 
 async function saveIndicator() {
   indError.value = ''
+
   if (!indForm.value.name.trim()) {
-    indError.value = '请填写指标名称'
+    indError.value = '请选择指标'
     return
   }
-  // Build param_config dict from paramConfigList
+
+  // Build param_config dict with {op, value} format
   const param_config = {}
   for (const p of indForm.value.paramConfigList) {
-    if (p.name.trim()) {
-      param_config[p.name.trim()] = { min: p.min, max: p.max }
+    if (p.name && p.name.trim()) {
+      param_config[p.name.trim()] = { op: p.op || '=', value: p.value }
     }
   }
-  const payload = {
-    name: indForm.value.name.trim(),
-    category: indForm.value.category,
-    description: indForm.value.description.trim(),
-    param_config: param_config
+
+  // 添加阈值条件
+  param_config['threshold'] = {
+    op: indForm.value.thresholdOp || '>',
+    value: indForm.value.thresholdValue || 0
   }
+
+  const payload = {
+    sequence_number: indForm.value.sequenceNumber.trim(),
+    name: indForm.value.name.trim(),
+    param_config: param_config,
+    description: indForm.value.description.trim()
+  }
+
   try {
     if (editingIndicator.value) {
       await api.updateIndicator(editingIndicator.value.id, payload)
@@ -296,7 +518,7 @@ async function saveIndicator() {
 }
 
 async function delIndicator(id) {
-  if (!confirm('确认删除此指标配置？')) return
+  if (!confirm('确认删除此预置条件？')) return
   try {
     await api.deleteIndicator(id)
     await loadAll()
@@ -311,18 +533,33 @@ async function delIndicator(id) {
 // ----- Formula CRUD -----
 function editFormula(fm) {
   editingFormula.value = fm
-  fmForm.value = {
-    name: fm.name,
-    formula_expr: fm.formula_expr,
-    logic_desc: fm.logic_desc || '',
-    indicatorRefs: [...(fm.indicator_refs || [])]
+  const refs = [...(fm.indicator_refs || [])]
+  // Auto-generate expression from indicator refs (convert old format to new)
+  let expr = ''
+  if (refs.length > 0) {
+    const seqs = refs.map(id => {
+      const ind = indicators.value.find(i => i.id === id)
+      return ind ? (ind.sequence_number || `I${ind.id}`) : `I${id}`
+    })
+    expr = seqs.join(' AND ')
+  } else {
+    expr = fm.formula_expr || ''
   }
+  fmForm.value = {
+    sequenceNumber: fm.sequence_number || '',
+    name: fm.name,
+    formula_expr: expr,
+    logicDesc: fm.logic_desc || '',
+    indicatorRefs: refs,
+    autoDesc: false
+  }
+  showAddFormula.value = true
 }
 
 function closeFormulaModal() {
   showAddFormula.value = false
   editingFormula.value = null
-  fmForm.value = { name: '', formula_expr: '', logic_desc: '', indicatorRefs: [] }
+  fmForm.value = { sequenceNumber: '', name: '', formula_expr: '', logicDesc: '', indicatorRefs: [], autoDesc: true }
   fmError.value = ''
 }
 
@@ -333,10 +570,64 @@ function toggleIndicatorRef(id) {
   } else {
     fmForm.value.indicatorRefs.push(id)
   }
+  // Auto-generate expression from selected indicators
+  regenerateExpr()
 }
 
 function insertOp(op) {
   fmForm.value.formula_expr += op
+}
+
+// Auto-generate formula expression from selected indicator refs
+function regenerateExpr() {
+  const refs = fmForm.value.indicatorRefs
+  if (refs.length === 0) {
+    fmForm.value.formula_expr = ''
+    return
+  }
+  // Build expression like "I001 AND I002 OR I003"
+  const seqs = refs.map(id => {
+    const ind = indicators.value.find(i => i.id === id)
+    return ind ? ind.sequence_number || `I${ind.id}` : `I${id}`
+  })
+  // Default: join with AND
+  fmForm.value.formula_expr = seqs.join(' AND ')
+}
+
+async function regenerateDesc() {
+  if (!fmForm.value.formula_expr.trim()) {
+    fmError.value = '请先填写公式表达式'
+    return
+  }
+  regenerating.value = true
+  fmError.value = ''
+  try {
+    // Create a temporary formula to get LLM description
+    // Actually we need a dedicated endpoint for this
+    // For now, just trigger regeneration via the API
+    const payload = {
+      sequence_number: fmForm.value.sequenceNumber,
+      name: fmForm.value.name || '临时',
+      formula_expr: fmForm.value.formula_expr,
+      logic_desc: '',  // empty to trigger auto-generation
+      indicator_refs: fmForm.value.indicatorRefs,
+      auto_desc: true
+    }
+    // Create temporarily to get the description
+    if (editingFormula.value) {
+      // Update and regenerate
+      const result = await api.updateFormulaCombination(editingFormula.value.id, { ...payload, auto_desc: true })
+      fmForm.value.logicDesc = result.logic_desc || '生成失败'
+    } else {
+      // Create new with auto-desc
+      const result = await api.createFormulaCombination(payload)
+      fmForm.value.logicDesc = result.logic_desc || '生成失败'
+    }
+  } catch (e) {
+    fmError.value = '生成描述失败: ' + (e.message || e)
+  } finally {
+    regenerating.value = false
+  }
 }
 
 async function saveFormula() {
@@ -349,13 +640,17 @@ async function saveFormula() {
     fmError.value = '请填写公式表达式'
     return
   }
+
+  const payload = {
+    sequence_number: fmForm.value.sequenceNumber.trim(),
+    name: fmForm.value.name.trim(),
+    formula_expr: fmForm.value.formula_expr.trim(),
+    logic_desc: fmForm.value.logicDesc.trim(),
+    indicator_refs: fmForm.value.indicatorRefs,
+    auto_desc: !fmForm.value.logicDesc.trim()  // auto-generate if no manual description
+  }
+
   try {
-    const payload = {
-      name: fmForm.value.name.trim(),
-      formula_expr: fmForm.value.formula_expr.trim(),
-      logic_desc: fmForm.value.logic_desc.trim(),
-      indicator_refs: fmForm.value.indicatorRefs
-    }
     if (editingFormula.value) {
       await api.updateFormulaCombination(editingFormula.value.id, payload)
     } else {
@@ -469,17 +764,18 @@ async function delFormula(id) {
   margin-bottom: 4px;
 }
 
+.ind-seq, .fm-seq {
+  font-size: 12px;
+  font-weight: 700;
+  color: #4a9eff;
+  background: #e8f4ff;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
 .ind-name, .fm-name {
   font-weight: 600;
   font-size: 14px;
-}
-
-.ind-category {
-  font-size: 11px;
-  color: #888;
-  background: #f0f0f0;
-  padding: 1px 6px;
-  border-radius: 10px;
 }
 
 .ind-params {
@@ -501,6 +797,7 @@ async function delFormula(id) {
   font-size: 12px;
   color: #666;
   margin-bottom: 4px;
+  line-height: 1.4;
 }
 
 .fm-expr {
@@ -528,11 +825,11 @@ async function delFormula(id) {
 
 /* Modal */
 .modal-content {
-  max-width: 480px;
+  max-width: 520px;
 }
 
 .modal-wide {
-  max-width: 600px;
+  max-width: 620px;
 }
 
 .field {
@@ -547,6 +844,29 @@ async function delFormula(id) {
   color: #333;
 }
 
+/* Builtin desc card */
+.builtin-desc-card {
+  background: #f0f7ff;
+  border: 1px solid #cce4ff;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+
+.builtin-desc-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: #1a6fb3;
+  margin-bottom: 4px;
+}
+
+.builtin-desc-text {
+  font-size: 12px;
+  color: #555;
+  line-height: 1.5;
+}
+
+/* Param config */
 .param-config-list {
   display: flex;
   flex-direction: column;
@@ -557,6 +877,34 @@ async function delFormula(id) {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: wrap;
+}
+
+.param-name {
+  font-size: 12px;
+  font-weight: 600;
+  min-width: 60px;
+  color: #333;
+}
+
+.param-sep {
+  color: #999;
+  font-size: 12px;
+}
+
+.param-hint {
+  font-size: 11px;
+  color: #888;
+  margin-left: 4px;
+}
+
+.param-tip {
+  font-size: 12px;
+  color: #888;
+  background: #f8f8f8;
+  padding: 8px;
+  border-radius: 4px;
+  margin-bottom: 12px;
 }
 
 .indicator-picker {
@@ -568,11 +916,11 @@ async function delFormula(id) {
 }
 
 .ind-pick-item {
-  padding: 4px 12px;
+  padding: 4px 10px;
   border: 1px solid var(--border-color, #e0e0e0);
   border-radius: 16px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12px;
   transition: all 0.15s;
 }
 
@@ -607,6 +955,18 @@ async function delFormula(id) {
   font-family: monospace;
 }
 
+/* Logic desc row */
+.logic-desc-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.logic-desc-row textarea {
+  flex: 1;
+  background: #f8f8f8;
+}
+
 .input-small {
   width: 120px;
 }
@@ -637,5 +997,58 @@ async function delFormula(id) {
   display: flex;
   gap: 8px;
   margin-top: 16px;
+}
+
+/* Disabled input style */
+input:disabled, textarea:disabled {
+  background: #f0f0f0;
+  color: #666;
+  cursor: not-allowed;
+}
+
+textarea {
+  resize: vertical;
+  font-family: inherit;
+}
+
+/* Threshold configuration */
+.threshold-config {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: #1a2a4a;
+  border-radius: 6px;
+  border: 1px solid #2a3a6a;
+}
+
+.threshold-label {
+  color: #888;
+  font-size: 13px;
+}
+
+.threshold-indicator {
+  color: #e94560;
+  font-weight: 600;
+  font-size: 14px;
+  padding: 2px 8px;
+  background: rgba(233,69,96,0.15);
+  border-radius: 4px;
+}
+
+.threshold-config .select {
+  width: auto;
+  min-width: 80px;
+}
+
+.threshold-config .input-tiny {
+  width: 80px;
+}
+
+/* Condition tag in indicator card */
+.condition-tag {
+  background: rgba(233,69,96,0.2) !important;
+  color: #e94560 !important;
+  font-weight: 600;
 }
 </style>
